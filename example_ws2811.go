@@ -1,4 +1,4 @@
-package main
+package ws2811
 
 import (
     "os"
