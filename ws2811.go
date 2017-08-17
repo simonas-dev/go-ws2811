@@ -98,8 +98,8 @@ func Wait() error {
 	}
 }
 
-func SetLed(index int, value uint32) {
-    fixedColor := recalculateColor(value)
+func SetLed(index int, value uint32, correctGamma bool) {
+    fixedColor := recalculateColor(value, correctGamma)
 	C.ws2811_set_led(&C.ledstring, C.int(index), C.uint32_t(fixedColor))
 }
 
@@ -111,14 +111,18 @@ func SetBitmap(a []uint32) {
 	C.ws2811_set_bitmap(&C.ledstring, unsafe.Pointer(&a[0]), C.int(len(a)*4))
 }
 
-func recalculateColor(value uint32) uint32 {
+func recalculateColor(value uint32, correctGamma bool) uint32 {
     red := value >> 16 & 0xFF
     green := value >> 8 & 0xFF
     blue := value >> 0 & 0xFF
+    
     // Gamma is off by default.
-    red = gammaTable[int(red)]
-    green = gammaTable[int(green)]
-    blue = gammaTable[int(blue)]
+    if (correctGamma) {
+        red = gammaTable[int(red)]
+        green = gammaTable[int(green)]
+        blue = gammaTable[int(blue)]
+    }
+
     // Red and Green is mixed up, when Rendering on LED strip. Idk why.
     // This kind of works.
     regenR := red << 8 & 0xFFFFFF
