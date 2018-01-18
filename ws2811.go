@@ -1,133 +1,167 @@
-// Copyright (c) 2015, Jacques Supcik, HEIA-FR
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//     * Redistributions of source code must retain the above copyright
-//       notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above copyright
-//       notice, this list of conditions and the following disclaimer in the
-//       documentation and/or other materials provided with the distribution.
-//     * Neither the name of the <organization> nor the
-//       names of its contributors may be used to endorse or promote products
-//       derived from this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-// ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-// WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-// DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
-// DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-// ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-/*
-Interface to ws2811 chip (neopixel driver). Make sure that you have
-ws2811.h and pwm.h in a GCC include path (e.g. /usr/local/include) and
-libws2811.a in a GCC library path (e.g. /usr/local/lib).
-See https://github.com/jgarff/rpi_ws281x for instructions
-*/
-
 package ws2811
 
 /*
-#cgo CFLAGS: -std=c99
-#cgo LDFLAGS: -lws2811
-#include "ws2811.go.h"
+#cgo CFLAGS: -std=c99 -Ivendor/rpi_ws281x
+#cgo LDFLAGS: -lws2811 -Lvendor/rpi_ws281x
+#include <stdint.h>
+#include <string.h>
+#include <ws2811.h>
+void ws2811_set_led(ws2811_t *ws2811, int ch, int index, uint32_t value) {
+  ws2811->channel[ch].leds[index] = value;
+}
+
+uint32_t ws2811_get_led(ws2811_t *ws2811, int ch, int index) {
+    return ws2811->channel[ch].leds[index];
+}
 */
 import "C"
+
 import (
-	"errors"
-	"fmt"
-	"unsafe"
+  "fmt"
+  "unsafe"
 )
 
-var (
-    gammaTable = [257]uint32 {
-        0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-        0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1,  1,
-        1,  1,  1,  1,  1,  1,  1,  1,  1,  2,  2,  2,  2,  2,  2,  2,
-        2,  3,  3,  3,  3,  3,  3,  3,  4,  4,  4,  4,  4,  5,  5,  5,
-        5,  6,  6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9, 10,
-       10, 10, 11, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 16, 16,
-       17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 24, 24, 25,
-       25, 26, 27, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 35, 35, 36,
-       37, 38, 39, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 50,
-       51, 52, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 66, 67, 68,
-       69, 70, 72, 73, 74, 75, 77, 78, 79, 81, 82, 83, 85, 86, 87, 89,
-       90, 92, 93, 95, 96, 98, 99,101,102,104,105,107,109,110,112,114,
-      115,117,119,120,122,124,126,127,129,131,133,135,137,138,140,142,
-      144,146,148,150,152,154,156,158,160,162,164,167,169,171,173,175,
-      177,180,182,184,186,189,191,193,196,198,200,203,205,208,210,213,
-      215,218,220,223,225,228,231,233,236,239,241,244,247,249,252,255 }
+// StripType layout
+type StripType int
+
+const (
+  // 4 color R, G, B and W ordering
+  StripRGBW StripType = 0x18100800
+  StripRBGW StripType = 0x18100008
+  StripGRBW StripType = 0x18081000
+  StripGBRW StripType = 0x18080010
+  StripBRGW StripType = 0x18001008
+  StripBGRW StripType = 0x18000810
+
+  // 3 color R, G and B ordering
+  StripRGB StripType = 0x00100800
+  StripRBG StripType = 0x00100008
+  StripGRB StripType = 0x00081000
+  StripGBR StripType = 0x00080010
+  StripBRG StripType = 0x00001008
+  StripBGR StripType = 0x00000810
 )
 
-func Init(gpioPin int, ledCount int, brightness int) error {
-	C.ledstring.channel[0].gpionum = C.int(gpioPin)
-	C.ledstring.channel[0].count = C.int(ledCount)
-	C.ledstring.channel[0].brightness = C.uint8_t(brightness)
-	res := int(C.ws2811_init(&C.ledstring))
-	if res == 0 {
-		return nil
-	} else {
-		return errors.New(fmt.Sprintf("Error ws2811.init.%d", res))
-	}
+// DefaultConfig default WS281x configuration
+var DefaultConfig = HardwareConfig{
+  Pin:        18,
+  Frequency:  800000, // 800khz
+  DMA:        10,
+  Brightness: 30,
+  StripType:  StripGRB,
 }
 
-func Fini() {
-	C.ws2811_fini(&C.ledstring)
+// HardwareConfig WS281x configuration
+type HardwareConfig struct {
+  Pin        int       // GPIO Pin with PWM alternate function, 0 if unused
+  Frequency  int       // the frequency of the display signal in hertz, can go as low as 400000
+  DMA        int       // the DMA channel to use
+  Invert     bool      // specifying if the signal line should be inverted
+  Channel    int       // PWM channel to us
+  Brightness int       // brightness value between 0 and 255
+  StripType  StripType // strip color layout
 }
 
-func Render() error {
-	res := int(C.ws2811_render(&C.ledstring))
-	if res == 0 {
-		return nil
-	} else {
-		return errors.New(fmt.Sprintf("Error ws2811.render.%d", res))
-	}
+// WS281x matrix representation for ws281x
+type WS281x struct {
+  Config *HardwareConfig
+
+  size   int
+  leds   *C.ws2811_t
+  closed bool
 }
 
-func Wait() error {
-	res := int(C.ws2811_wait(&C.ledstring))
-	if res == 0 {
-		return nil
-	} else {
-		return errors.New(fmt.Sprintf("Error ws2811.wait.%d", res))
-	}
+// NewWS281x returns a new matrix using the given size and config
+func New(size int, config *HardwareConfig) (*WS281x, error) {
+  c := &WS281x{
+    Config: config,
+
+    size: size,
+    leds: (*C.ws2811_t)(C.malloc(C.sizeof_ws2811_t)),
+  }
+
+  if c.leds == nil {
+    return nil, fmt.Errorf("unable to allocate memory")
+  }
+
+  C.memset(unsafe.Pointer(c.leds), 0, C.sizeof_ws2811_t)
+
+  c.initializeChannels()
+  c.initializeController()
+  return c, nil
 }
 
-func SetLed(index int, value uint32, correctGamma bool) {
-    fixedColor := recalculateColor(value, correctGamma)
-	C.ws2811_set_led(&C.ledstring, C.int(index), C.uint32_t(fixedColor))
+func (c *WS281x) initializeChannels() {
+  for ch := 0; ch < 2; ch++ {
+    c.setChannel(0, 0, 0, 0, false, StripRGB)
+  }
+
+  c.setChannel(
+    c.Config.Channel,
+    c.size,
+    c.Config.Pin,
+    c.Config.Brightness,
+    c.Config.Invert,
+    c.Config.StripType,
+  )
 }
 
-func Clear() {
-	C.ws2811_clear(&C.ledstring)
+func (c *WS281x) setChannel(ch, count, pin, brightness int, inverse bool, t StripType) {
+  c.leds.channel[ch].count = C.int(count)
+  c.leds.channel[ch].gpionum = C.int(pin)
+  c.leds.channel[ch].brightness = C.uint8_t(brightness)
+  c.leds.channel[ch].invert = C.int(btoi(inverse))
+  c.leds.channel[ch].strip_type = C.int(int(t))
 }
 
-func SetBitmap(a []uint32) {
-	C.ws2811_set_bitmap(&C.ledstring, unsafe.Pointer(&a[0]), C.int(len(a)*4))
+func (c *WS281x) initializeController() {
+  c.leds.freq = C.uint32_t(c.Config.Frequency)
+  c.leds.dmanum = C.int(c.Config.DMA)
 }
 
-func recalculateColor(value uint32, correctGamma bool) uint32 {
-    red := value >> 16 & 0xFF
-    green := value >> 8 & 0xFF
-    blue := value >> 0 & 0xFF
-    
-    // Gamma is off by default.
-    if (correctGamma) {
-        red = gammaTable[int(red)]
-        green = gammaTable[int(green)]
-        blue = gammaTable[int(blue)]
-    }
+// Initialize initialize library, must be called once before other functions are
+// called.
+func (c *WS281x) Init() error {
+  if resp := int(C.ws2811_init(c.leds)); resp != 0 {
+    return fmt.Errorf("ws2811_init failed with code: %d", resp)
+  }
 
-    // Red and Green is mixed up, when Rendering on LED strip. Idk why.
-    // This kind of works.
-    regenR := red << 8 & 0xFFFFFF
-    regenG := green << 16 & 0xFFFFFF
-    regenB := blue << 0 & 0xFFFFFF
-
-    return regenR + regenG + regenB
+  return nil
 }
+
+// Render update the display with the data from the LED buffer
+func (c *WS281x) Render() error {
+  if resp := int(C.ws2811_render(c.leds)); resp != 0 {
+    return fmt.Errorf("ws2811_render failed with code: %d", resp)
+  }
+
+  return nil
+}
+
+func (c *WS281x) GetLed(position int) uint32 {
+  color := C.ws2811_get_led(c.leds, C.int(c.Config.Channel), C.int(position))
+  return uint32(color)
+}
+
+func (c *WS281x) SetLed(position int, color uint32) {
+  C.ws2811_set_led(c.leds, C.int(c.Config.Channel), C.int(position), C.uint32_t(color))
+}
+
+// Close finalizes the ws281x interface
+func (c *WS281x) Close() error {
+  if c.closed {
+    return nil
+  }
+
+  c.closed = true
+  C.ws2811_fini(c.leds)
+  return nil
+}
+
+func btoi(b bool) int {
+  if b {
+    return 1
+  }
+  return 0
+}
+

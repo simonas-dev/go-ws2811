@@ -9,13 +9,19 @@ import (
 
 func main() {
     color, _ := strconv.ParseUint(os.Args[1], 0, 64)
-    correction, _ := strconv.ParseUint(os.Args[2], 10, 64)
-    isCorrectionEnabled := correction > 0
-    ws2811.Init(18, 144, 255)
 
-    for i := 0; i < 144; i++ {
-        ws2811.SetLed(i, uint32(color), isCorrectionEnabled)
+    config := ws2811.DefaultConfig
+    config.Brightness = 255
+    config.Pin = 12
+
+    c, _ := ws2811.New(144*4, &config)
+
+    defer c.Close()
+    _ = c.Init()
+
+    for i := 0; i < 144*4; i++ {
+        c.SetLed(i, uint32(color))
     }
 
-    ws2811.Render()
+    c.Render()
 }
